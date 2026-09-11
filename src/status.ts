@@ -64,6 +64,13 @@ const UPDATE_GLYPH: Record<MatrixRow['updateStatus'], string> = {
   unchecked: ' ',
 };
 
+/** 显示宽度：CJK/全角按 2 列计；对齐区已保证不含 Ambiguous Width 符号。 */
+function displayWidth(text: string): number {
+  let width = 0;
+  for (const ch of text) width += /[\u3000-\u9fff\uff00-\uffef]/.test(ch) ? 2 : 1;
+  return width;
+}
+
 function pad(text: string, width: number): string {
   // CJK/全角按 2 列计；对齐区已保证不含 Ambiguous Width 符号（✓ · × ↑ 等）
   let width_ = 0;
@@ -73,13 +80,14 @@ function pad(text: string, width: number): string {
 
 export function renderMatrix(ctx: Ctx, rows: MatrixRow[]): string {
   const headers = ctx.agents.map((a) => shortAgentId(a.id));
-  const nameWidth = Math.max(10, ...rows.map((r) => r.skill.name.length + updateMarker(r).length)) + 2;
+  const nameWidth = Math.max(10, ...rows.map((r) => displayWidth(r.skill.name + updateMarker(r)))) + 2;
+  const typeWidth = Math.max(4, ...rows.map((r) => displayWidth(r.skill.type)));
   const colWidth = 9;
   const lines: string[] = [];
-  lines.push(pad('skill', nameWidth) + 'type' + '  ' + headers.map((h) => pad(h, colWidth)).join('') + 'update');
-  lines.push('-'.repeat(nameWidth + 4 + headers.length * colWidth + 7));
+  lines.push(pad('skill', nameWidth) + pad('type', typeWidth) + '  ' + headers.map((h) => pad(h, colWidth)).join('') + 'update');
+  lines.push('-'.repeat(nameWidth + typeWidth + 2 + headers.length * colWidth + 7));
   for (const row of rows) {
-    let line = pad(row.skill.name + updateMarker(row), nameWidth) + pad(row.skill.type, 4) + '  ';
+    let line = pad(row.skill.name + updateMarker(row), nameWidth) + pad(row.skill.type, typeWidth) + '  ';
     for (const agent of ctx.agents) {
       const cell = row.cells[agent.id];
       line += pad(cellSymbol(cell.state) + (cell.mode ? `(${cell.mode.slice(0, 3)})` : ''), colWidth);
