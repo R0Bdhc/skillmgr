@@ -1,6 +1,8 @@
+import { existsSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import { emitKeypressEvents } from 'node:readline';
 import type { DatabaseSync } from 'node:sqlite';
-import type { AgentSpec, Ctx } from '../config.ts';
+import { expandHome, saveExtraAgent, type AgentSpec, type Ctx } from '../config.ts';
 import { listDetectedAgents, shortAgentId } from '../agents.ts';
 import { buildMatrix, cellSymbol, type MatrixRow } from '../status.ts';
 import { deployOne, undeployOne } from '../deploy.ts';
@@ -13,7 +15,7 @@ import * as ansi from './ansi.ts';
 
 export type ViewMode = 'menu' | 'agents' | 'manage' | 'monitor' | 'help';
 
-export const MENU_ITEMS = ['Skills Management', 'Skills Status Monitor'] as const;
+export const MENU_ITEMS = ['Skills Management', 'Skills Status Monitor', 'Add Agent'] as const;
 
 export interface TuiState {
   ctx: Ctx;
@@ -30,7 +32,7 @@ export interface TuiState {
   currentAgent: AgentSpec | null;
   filter: { active: boolean; text: string };
   status: { text: string; ok: boolean };
-  input: { step: 'repo' | 'skill'; repo: string; prompt: string; buffer: string } | null;
+  input: { step: 'repo' | 'skill' | 'agent-path' | 'agent-id'; repo: string; agentPath: string; prompt: string; buffer: string } | null;
 }
 
 /** 管理视图（m×1）的一行：yes = 已激活（部署在位），no = 未激活。 */
@@ -67,13 +69,28 @@ export function manageEntries(state: TuiState): ManageEntry[] {
   });
 }
 
+/** 监视视图只显示"已连接"的 agent：检测到已安装（detectPaths 存在）的那批。 */
+export function monitorAgents(state: TuiState): AgentSpec[] {
+  return listDetectedAgents(state.ctx)
+    .filter((a) => a.detected)
+    .map(({ id, label, skillsDir, detectPaths }) => ({ id, label, skillsDir, detectPaths }));
+}
+
+/** 从 skills 目录绝对路径建议 agent id：取上级目录名，去点、小写、非法字符转 -。 */
+export function suggestAgentId(skillsDir: string): string {
+  const parent = skillsDir.replace(/[\\/]+$/, '').split(/[\\/]/).slice(-2, -1)[0] ?? '';
+  const id = parent.toLowerCase().replace(/^\./, '').replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+  return id || 'agent';
+}
+
 /** 监视视图当前光标指向的 {skill, agent}。 */
 export function cellAt(state: TuiState): { row: MatrixRow; agent: AgentSpec } | null {
   const rows = filteredRows(state);
-  if (rows.length === 0) return null;
+  const agents = monitorAgents(state);
+  if (rows.length === 0 || agents.length === 0) return null;
   const r = Math.min(state.monitorCursor.r, rows.length - 1);
-  const c = Math.min(state.monitorCursor.c, state.ctx.agents.length - 1);
-  return { row: rows[r], agent: state.ctx.agents[c] };
+  const c = Math.min(state.monitorCursor.c, agents.length - 1);
+  return { row: rows[r], agent: agents[c] };
 }
 
 /** 显示宽度：CJK/全角按 2 列计。 */
@@ -202,31 +219,36 @@ function buildManageFrame(state: TuiState): string {
 
 function buildMonitorFrame(state: TuiState): string {
   const rows = filteredRows(state);
-  const agents = state.ctx.agents;
+  const agents = monitorAgents(state);
   const colW = Math.max(8, ...agents.map((a) => shortAgentId(a.id).length + 2));
   const nameW = Math.max(12, ...rows.map((r) => displayWidth(r.skill.name))) + 2;
   const lines = [title(state, 'status monitor (read-only)')];
 
-  let header = pad('skill', nameW);
-  for (const agent of agents) header += pad(shortAgentId(agent.id), colW);
-  header += ansi.paint('gray', 'up');
-  lines.push(header);
-  lines.push(ansi.paint('gray', '─'.repeat(nameW + agents.length * colW + 3)));
+  if (agents.length === 0) {
+    lines.push('');
+    lines.push(ansi.paint('yellow', ' no connected agents — use "Add Agent" in the main menu to connect one'));
+  } else {
+    let header = pad('skill', nameW);
+    for (const agent of agents) header += pad(shortAgentId(agent.id), colW);
+    header += ansi.paint('gray', 'up');
+    lines.push(header);
+    lines.push(ansi.paint('gray', '─'.repeat(nameW + agents.length * colW + 3)));
 
-  rows.forEach((row, ri) => {
-    const rowSelected = ri === Math.min(state.monitorCursor.r, rows.length - 1);
-    let line = rowSelected ? ansi.style(pad(row.skill.name, nameW), ansi.BOLD) : pad(row.skill.name, nameW);
-    agents.forEach((agent, ci) => {
-      const cell = row.cells[agent.id];
-      const mark = `${cellSymbol(cell.state)}${cell.mode ? cell.mode[0] : ''}`;
-      const text = pad(mark, colW);
-      const isSelected = rowSelected && ci === state.monitorCursor.c;
-      line += isSelected ? ansi.style(text, ansi.INVERSE) : ansi.paint(STATE_COLOR[cell.state], text);
+    rows.forEach((row, ri) => {
+      const rowSelected = ri === Math.min(state.monitorCursor.r, rows.length - 1);
+      let line = rowSelected ? ansi.style(pad(row.skill.name, nameW), ansi.BOLD) : pad(row.skill.name, nameW);
+      agents.forEach((agent, ci) => {
+        const cell = row.cells[agent.id];
+        const mark = `${cellSymbol(cell.state)}${cell.mode ? cell.mode[0] : ''}`;
+        const text = pad(mark, colW);
+        const isSelected = rowSelected && ci === state.monitorCursor.c;
+        line += isSelected ? ansi.style(text, ansi.INVERSE) : ansi.paint(STATE_COLOR[cell.state], text);
+      });
+      const updateMark = UPDATE_MARK[row.updateStatus];
+      line += updateMark === '↑' ? ansi.paint('yellow', '↑') : updateMark === 'E' ? ansi.paint('red', 'E') : ansi.paint('gray', updateMark);
+      lines.push(line);
     });
-    const updateMark = UPDATE_MARK[row.updateStatus];
-    line += updateMark === '↑' ? ansi.paint('yellow', '↑') : updateMark === 'E' ? ansi.paint('red', 'E') : ansi.paint('gray', updateMark);
-    lines.push(line);
-  });
+  }
   if (rows.length === 0) lines.push(ansi.paint('gray', state.filter.text ? `no skills match "${state.filter.text}"` : 'store is empty — run skillmgr scan'));
 
   lines.push('');
@@ -240,7 +262,8 @@ function buildHelpFrame(): string {
   const lines = [
     ansi.style(' skillmgr — keys', ansi.BOLD),
     '',
-    '  main menu       choose Skills Management or Skills Status Monitor',
+    '  main menu       Skills Management · Skills Status Monitor · Add Agent',
+    '                   add agent = type the agent skills dir (absolute path)',
     '',
     '  skills management (per agent, m×1 list):',
     '    ↑↓            move between skills',
@@ -252,7 +275,7 @@ function buildHelpFrame(): string {
     '    ←             back to the agent list',
     '',
     '  agent list:      enter manage · a add from GitHub · D doctor · R rescan',
-    '  status monitor:  read-only matrix · ↑↓←→ inspect · r refresh',
+    '  status monitor:  connected agents only · read-only · ↑↓←→ inspect · r refresh',
     '  anywhere:        ? help · q quit',
     '',
     ansi.paint('gray', '  press any key to return'),
@@ -377,9 +400,40 @@ export function runTui(ctx: Ctx, db: DatabaseSync, version = '0'): void {
         state.input.buffer = state.input.buffer.slice(0, -1);
       } else if (key && key.name === 'return') {
         const value = state.input.buffer.trim();
+        if (state.input.step === 'agent-path') {
+          if (!value) { state.input = null; redraw(); return; }
+          const expanded = expandHome(value);
+          if (!isAbsolute(expanded)) {
+            setStatus(state, 'path must be absolute (or start with ~)', false);
+            redraw();
+            return;
+          }
+          state.input = { step: 'agent-id', repo: '', agentPath: expanded, prompt: 'agent id:', buffer: suggestAgentId(expanded) };
+          redraw();
+          return;
+        }
+        if (state.input.step === 'agent-id') {
+          const id = value.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+          if (!id) { setStatus(state, 'agent id required', false); redraw(); return; }
+          const skillsDir = state.input.agentPath;
+          const spec: AgentSpec = { id, label: id, skillsDir, detectPaths: [skillsDir] };
+          try {
+            saveExtraAgent(state.ctx, spec);
+          } catch (error) {
+            setStatus(state, (error as Error).message, false);
+            redraw();
+            return;
+          }
+          state.ctx.agents.push(spec);
+          reload(state.ctx, db, state);
+          state.input = null;
+          setStatus(state, `agent connected: ${id} → ${skillsDir}${existsSync(skillsDir) ? '' : ' (dir will be created on first deploy)'}`);
+          redraw();
+          return;
+        }
         if (state.input.step === 'repo') {
           if (!value) { state.input = null; redraw(); return; }
-          state.input = { step: 'skill', repo: value, prompt: 'skill name (empty = auto):', buffer: '' };
+          state.input = { step: 'skill', repo: value, agentPath: '', prompt: 'skill name (empty = auto):', buffer: '' };
           redraw();
           return;
         }
@@ -431,7 +485,8 @@ export function runTui(ctx: Ctx, db: DatabaseSync, version = '0'): void {
       else if (plainKey === 'down') state.menuCursor = Math.min(MENU_ITEMS.length - 1, state.menuCursor + 1);
       else if (plainKey === 'return' || plainKey === 'space') {
         if (state.menuCursor === 0) state.mode = 'agents';
-        else { state.mode = 'monitor'; state.monitorCursor = { r: 0, c: 0 }; }
+        else if (state.menuCursor === 1) { state.mode = 'monitor'; state.monitorCursor = { r: 0, c: 0 }; }
+        else state.input = { step: 'agent-path', repo: '', agentPath: '', prompt: 'agent skills dir (absolute path):', buffer: '' };
       } else if (plainKey === 'q') { quit(); return; }
       redraw();
       return;
@@ -511,12 +566,13 @@ export function runTui(ctx: Ctx, db: DatabaseSync, version = '0'): void {
       return;
     }
 
-    // monitor（只读）
+    // monitor（只读，仅已连接 agent）
     const rowCount = filteredRows(state).length;
+    const connectedCount = monitorAgents(state).length;
     if (plainKey === 'up') state.monitorCursor.r = Math.max(0, state.monitorCursor.r - 1);
     else if (plainKey === 'down') state.monitorCursor.r = Math.min(Math.max(0, rowCount - 1), state.monitorCursor.r + 1);
     else if (plainKey === 'left') state.monitorCursor.c = Math.max(0, state.monitorCursor.c - 1);
-    else if (plainKey === 'right') state.monitorCursor.c = Math.min(state.ctx.agents.length - 1, state.monitorCursor.c + 1);
+    else if (plainKey === 'right') state.monitorCursor.c = Math.min(Math.max(0, connectedCount - 1), state.monitorCursor.c + 1);
     else if (plainKey === 'r') {
       reload(ctx, db, state);
       setStatus(state, 'refreshed');

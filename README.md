@@ -119,14 +119,16 @@ Run bare `skillmgr` (or `skillmgr tui`) in a terminal. A main menu separates **m
                                               yes   code-debugger
                                               no    theme-factory
                                               ...
-       └──────────► Skills Status Monitor ──► the full skill × agent matrix (read-only)
+       ──────────► Skills Status Monitor ──► the skill × agent matrix, connected agents only (read-only)
+       └──────────► Add Agent ────────────► type the agent's skills dir (absolute path)
 ```
 
 - **Skills Management** — one screen per agent, an m×1 list where every skill is just **yes** (activated/deployed) or **no** (not activated). `enter`/`space` toggles it for that agent; re-activating a drifted row repairs it. Unmanaged content is never touched.
-- **Skills Status Monitor** — the read-only deployment matrix: inspect, filter, refresh.
+- **Skills Status Monitor** — the read-only deployment matrix, showing **connected agents only** (agents detected as installed). Agents whose directories don't exist stay hidden until their first deployment creates them.
+- **Add Agent** — missing an agent? Type its skills directory (absolute path, `~/` works too), confirm the suggested id, and it is connected instantly — persisted to `<store>/.registry/config.json` (`extraAgents`), same as editing the config by hand.
 
 ```
- menu      ↑↓ move · enter select
+ menu      ↑↓ move · enter select · q quit
  agents    ↑↓ move · enter manage · a add from GitHub · D doctor · R rescan · ← back
  manage    ↑↓ move · enter/space yes↔no · u update · / filter · ← back
  monitor   ↑↓←→ inspect · r refresh · / filter · ← back

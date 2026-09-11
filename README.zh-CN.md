@@ -119,11 +119,13 @@ Legend: ✓ 已部署  ! 漂移  x 缺失  ? 非受管  · 未部署  |  = 最�
                                               yes   code-debugger
                                               no    theme-factory
                                               ...
-       └──────────► Skills Status Monitor ──► 完整 skill × agent 矩阵（只读）
+       ──────────► Skills Status Monitor ──► skill × agent 矩阵，仅显示已连接 agent（只读）
+       └──────────► Add Agent ────────────► 输入该 agent 的 skills 目录绝对路径
 ```
 
 - **Skills Management**——每个 agent 一屏，m×1 列表里每个 skill 只有 **yes**（已激活/已部署）或 **no**（未激活）两个值。`enter`/`space` 对该 agent 切换；重新激活 drift 行即修复；非受管内容绝不触碰。
-- **Skills Status Monitor**——只读部署矩阵：巡检、过滤、刷新。
+- **Skills Status Monitor**——只读部署矩阵，**只显示已连接的 agent**（检测到已安装的那批）；目录尚不存在的 agent 在首次部署创建目录前不会出现。
+- **Add Agent**——发现遗漏的 agent？输入它的 skills 目录（绝对路径，也支持 `~/`），确认建议的 id 即刻接入——持久化到 `<store>/.registry/config.json`（`extraAgents` 段），与手改配置完全等效。
 
 ```
  menu      ↑↓ 移动 · enter 选择

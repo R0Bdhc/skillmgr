@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -132,4 +132,28 @@ export function loadCtx(rootOverride?: string): Ctx {
     agents,
     allowedHosts: cfg.allowedHosts ?? DEFAULT_ALLOWED_HOSTS,
   };
+}
+
+/**
+ * 把一个 agent 持久化到 <store>/.registry/config.json 的 extraAgents 段
+ * （与手改配置等效）。id 或 skillsDir 冲突时抛错，不产生半写状态。
+ */
+export function saveExtraAgent(ctx: Ctx, agent: AgentSpec): void {
+  const path = join(ctx.registryDir, 'config.json');
+  const cfg: ConfigFile = existsSync(path) ? loadConfigFile(ctx.registryDir) : {};
+  cfg.extraAgents ??= [];
+  if (cfg.extraAgents.some((a) => a.id === agent.id)) {
+    throw new Error(`agent id already exists: ${agent.id}`);
+  }
+  const normalize = (p: string) => expandHome(p).replace(/\//g, '\\').toLowerCase();
+  if (
+    cfg.extraAgents.some((a) => normalize(a.skillsDir) === normalize(agent.skillsDir)) ||
+    Object.values(cfg.agents ?? {}).some((override) => override.skillsDir && normalize(override.skillsDir) === normalize(agent.skillsDir)) ||
+    BUILTIN_AGENTS.some((a) => normalize(a.skillsDir) === normalize(agent.skillsDir))
+  ) {
+    throw new Error(`another agent already uses this skills directory: ${agent.skillsDir}`);
+  }
+  cfg.extraAgents.push(agent);
+  mkdirSync(ctx.registryDir, { recursive: true });
+  writeFileSync(path, JSON.stringify(cfg, null, 2) + '\n');
 }

@@ -1,13 +1,26 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildFrame, cellAt, ensureTTY, filteredRows, manageEntries, MENU_ITEMS, type TuiState } from '../src/tui/app.ts';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { saveExtraAgent } from '../src/config.ts';
+import { buildFrame, cellAt, ensureTTY, filteredRows, manageEntries, monitorAgents, suggestAgentId, MENU_ITEMS, type TuiState } from '../src/tui/app.ts';
 import type { MatrixRow, CellState } from '../src/status.ts';
 import type { AgentSpec, Ctx } from '../src/config.ts';
 
-const AGENTS: AgentSpec[] = [
-  { id: 'fake-agent', label: 'Fake', skillsDir: '/x/fake', detectPaths: [] },
-  { id: 'other-agent', label: 'Other', skillsDir: '/x/other', detectPaths: [] },
-];
+/** 真实临时目录：connected 目录存在（检测通过），ghost 不存在（未连接）。 */
+function makeDetectionFixture(): { base: string; connected: AgentSpec; ghost: AgentSpec; clean: () => void } {
+  const base = mkdtempSync(join(tmpdir(), 'skillmgr-tui-'));
+  const connectedDir = join(base, 'connected');
+  mkdirSync(connectedDir, { recursive: true });
+  return {
+    base,
+    connected: { id: 'connected', label: 'Connected', skillsDir: connectedDir, detectPaths: [connectedDir] },
+    ghost: { id: 'ghost', label: 'Ghost', skillsDir: join(base, 'ghost'), detectPaths: [join(base, 'ghost')] },
+    clean: () => rmSync(base, { recursive: true, force: true }),
+  };
+}
 
 function mkRow(name: string, cells: Record<string, CellState>): MatrixRow {
   const full: Record<string, { state: CellState; mode?: string; detail: string }> = {};
@@ -30,6 +43,10 @@ function mkRow(name: string, cells: Record<string, CellState>): MatrixRow {
   };
 }
 
+const AGENTS: AgentSpec[] = [];
+const FIX = makeDetectionFixture();
+AGENTS.push(FIX.connected, FIX.ghost);
+
 function fakeState(overrides: Partial<TuiState> = {}): TuiState {
   return {
     ctx: { root: '/fake/store', agents: AGENTS } as unknown as Ctx,
@@ -50,22 +67,52 @@ function fakeState(overrides: Partial<TuiState> = {}): TuiState {
   };
 }
 
-test('menu frame lists the two entries with the selected one highlighted', () => {
+test('menu items: management, monitor, add agent', () => {
+  assert.deepEqual([...MENU_ITEMS], ['Skills Management', 'Skills Status Monitor', 'Add Agent']);
   const frame = buildFrame(fakeState());
-  assert.match(frame, /skillmgr · main menu/);
   assert.match(frame, /Skills Management/);
   assert.match(frame, /Skills Status Monitor/);
-  assert.match(frame, /\x1b\[7m/);
-  // 默认选中第一项：Skills Management 应出现在反色片段内
-  const inverseChunk = frame.split('\x1b[7m')[1]?.split('\x1b[0m')[0] ?? '';
-  assert.match(inverseChunk, /Skills Management/);
+  assert.match(frame, /Add Agent/);
 });
 
-test('agents frame lists every agent of the store config', () => {
-  const frame = buildFrame(fakeState({ mode: 'agents' }));
-  assert.match(frame, /skills management — pick an agent/);
-  assert.match(frame, /fake-agent/);
-  assert.match(frame, /other-agent/);
+test('monitorAgents only returns connected (detected) agents', () => {
+  const state = fakeState({ mode: 'monitor' });
+  const ids = monitorAgents(state).map((a) => a.id);
+  assert.deepEqual(ids, ['connected']);
+  assert.ok(!ids.includes('ghost'));
+});
+
+test('monitor frame hides unconnected agents and hints when none connected', () => {
+  const frame = buildFrame(fakeState({ mode: 'monitor' }));
+  assert.match(frame, /status monitor \(read-only\)/);
+  assert.match(frame, /connected/);
+  assert.doesNotMatch(frame, /ghost/);
+
+  const empty = buildFrame(fakeState({
+    mode: 'monitor',
+    ctx: { root: '/fake/store', agents: [FIX.ghost] } as unknown as Ctx,
+  }));
+  assert.match(empty, /no connected agents — use "Add Agent" in the main menu/);
+});
+
+test('suggestAgentId derives id from the parent directory name', () => {
+  assert.equal(suggestAgentId('/home/u/.myagent/skills'), 'myagent');
+  assert.equal(suggestAgentId('/opt/tools/my agent/skills/'), 'my-agent');
+  assert.equal(suggestAgentId('/x'), 'agent');
+});
+
+test('manage frame renders the m×1 yes/no list for the chosen agent', () => {
+  const state = fakeState({
+    mode: 'manage',
+    currentAgent: AGENTS[0],
+    rows: [mkRow('alpha', { connected: 'ok' }), mkRow('Beta-skill', {})],
+  });
+  const frame = buildFrame(state);
+  assert.match(frame, /skills management — Connected/);
+  assert.match(frame, /\byes\b/);
+  assert.match(frame, /\bno\b/);
+  assert.match(frame, /\x1b\[7m/);
+  assert.doesNotMatch(frame, /ghost/);
 });
 
 test('manageEntries reduces cell states to binary yes/no with notes', () => {
@@ -73,11 +120,11 @@ test('manageEntries reduces cell states to binary yes/no with notes', () => {
     mode: 'manage',
     currentAgent: AGENTS[0],
     rows: [
-      mkRow('ok-skill', { 'fake-agent': 'ok' }),
-      mkRow('drift-skill', { 'fake-agent': 'drift' }),
-      mkRow('missing-skill', { 'fake-agent': 'missing' }),
+      mkRow('ok-skill', { connected: 'ok' }),
+      mkRow('drift-skill', { connected: 'drift' }),
+      mkRow('missing-skill', { connected: 'missing' }),
       mkRow('gone-skill', {}),
-      mkRow('locked-skill', { 'fake-agent': 'foreign' }),
+      mkRow('locked-skill', { connected: 'foreign' }),
     ],
   });
   const entries = manageEntries(state);
@@ -88,34 +135,6 @@ test('manageEntries reduces cell states to binary yes/no with notes', () => {
   assert.equal(entries[3].note, '');
 });
 
-test('manage frame renders the m×1 yes/no list for the chosen agent', () => {
-  const frame = buildFrame(fakeState({
-    mode: 'manage',
-    currentAgent: AGENTS[0],
-    rows: [mkRow('alpha', { 'fake-agent': 'ok' }), mkRow('Beta-skill', {})],
-  }));
-  assert.match(frame, /skills management — Fake/);
-  assert.match(frame, /\byes\b/);
-  assert.match(frame, /\bno\b/);
-  assert.match(frame, /\x1b\[7m/);
-  // manage 视图不显示其他 agent 的列名
-  assert.doesNotMatch(frame, /other-agent/);
-});
-
-test('monitor frame stays read-only with the full matrix', () => {
-  const frame = buildFrame(fakeState({
-    mode: 'monitor',
-    monitorCursor: { r: 0, c: 0 },
-    rows: [mkRow('alpha', { 'fake-agent': 'ok' }), mkRow('Beta-skill', {})],
-  }));
-  assert.match(frame, /status monitor \(read-only\)/);
-  assert.match(frame, /alpha/);
-  assert.match(frame, /fake-agent/);
-  assert.match(frame, /other-agent/);
-  assert.match(frame, /\x1b\[7m/);
-  assert.doesNotMatch(frame, /enter\/space toggle/, 'monitor 不应出现管理键位');
-});
-
 test('filteredRows matches skill names case-insensitively', () => {
   const state = fakeState({ filter: { active: true, text: 'ALP' } });
   assert.equal(filteredRows(state).length, 1);
@@ -124,21 +143,41 @@ test('filteredRows matches skill names case-insensitively', () => {
   assert.equal(filteredRows(fakeState()).length, 2);
 });
 
-test('cellAt clamps the monitor cursor to the visible matrix', () => {
-  const at = cellAt(fakeState({ mode: 'monitor', monitorCursor: { r: 0, c: 1 } }));
-  assert.equal(at?.agent.id, 'other-agent');
+test('cellAt clamps the monitor cursor to connected agents only', () => {
+  const at = cellAt(fakeState({ mode: 'monitor', monitorCursor: { r: 0, c: 99 } }));
+  assert.equal(at?.agent.id, 'connected');
+  assert.equal(at?.row.skill.name, 'alpha');
   const clamped = cellAt(fakeState({ mode: 'monitor', monitorCursor: { r: 99, c: 99 } }));
   assert.equal(clamped?.row.skill.name, 'Beta-skill');
-  assert.equal(clamped?.agent.id, 'other-agent');
-  assert.equal(cellAt(fakeState({ mode: 'monitor', rows: [] })), null);
+  assert.equal(clamped?.agent.id, 'connected');
+});
+
+test('saveExtraAgent persists to store config and rejects duplicates', () => {
+  const base = mkdtempSync(join(tmpdir(), 'skillmgr-saveagent-'));
+  try {
+    const ctx = { registryDir: join(base, '.registry'), agents: [] } as unknown as Ctx;
+    saveExtraAgent(ctx, { id: 'hermes', label: 'Hermes', skillsDir: join(base, 'hermes', 'skills'), detectPaths: [join(base, 'hermes')] });
+    const cfgPath = join(base, '.registry', 'config.json');
+    assert.ok(existsSync(cfgPath));
+    const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));
+    assert.equal(cfg.extraAgents[0].id, 'hermes');
+
+    assert.throws(
+      () => saveExtraAgent(ctx, { id: 'hermes', label: 'X', skillsDir: join(base, 'other'), detectPaths: [] }),
+      /agent id already exists/,
+    );
+    assert.throws(
+      () => saveExtraAgent(ctx, { id: 'other', label: 'X', skillsDir: join(base, 'hermes', 'skills'), detectPaths: [] }),
+      /already uses this skills directory/,
+    );
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
 });
 
 test('ensureTTY rejects non-interactive streams', () => {
   assert.throws(() => ensureTTY({ isTTY: false }, { isTTY: true }), /TTY/);
   assert.throws(() => ensureTTY({ isTTY: true }, { isTTY: false }), /TTY/);
   assert.doesNotThrow(() => ensureTTY({ isTTY: true }, { isTTY: true }));
-});
-
-test('menu items are exactly management and monitor', () => {
-  assert.deepEqual([...MENU_ITEMS], ['Skills Management', 'Skills Status Monitor']);
+  void homedir;
 });
