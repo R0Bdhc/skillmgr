@@ -8,6 +8,7 @@ import { buildMatrix, matrixToJson, renderMatrix } from './status.ts';
 import { collectIssues, fixIssues } from './doctor.ts';
 import { addFromRepo, checkAll, rollbackSkill, skillDetail, updateSkill } from './sources.ts';
 import { initStore } from './init.ts';
+import { runTui } from './tui/app.ts';
 import { addHistory } from './registry.ts';
 
 // ---- minimal argument parsing (zero dependencies, no commander) ----
@@ -67,6 +68,7 @@ Usage: skillmgr <command> [args]
   doctor [--fix]                    reconcile disk vs registry and repair
   history                           recent operations
   root                              print the canonical store location
+  tui                               interactive console (or just run bare "skillmgr")
 
 Global flags: --json (machine-readable output), --root <path>, --version
 Docs: https://github.com/R0Bdhc/skillmgr
@@ -265,19 +267,19 @@ function dispatch(cmd: string, args: ParsedArgs, ctx: Ctx): number {
   }
 }
 
-function version(): string {
+function packageVersion(): string {
   try {
     const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
-    return `skillmgr v${pkg.version}`;
+    return String(pkg.version ?? '0');
   } catch {
-    return 'skillmgr (version unknown)';
+    return '0';
   }
 }
 
 export function main(): void {
   const argv = process.argv.slice(2);
   if (argv[0] === '--version' || argv[0] === '-v') {
-    console.log(version());
+    console.log(`skillmgr v${packageVersion()}`);
     return;
   }
   let args: ParsedArgs;
@@ -288,13 +290,24 @@ export function main(): void {
     process.exitCode = 1;
     return;
   }
-  const [cmd] = args.positionals.splice(0, 1);
-  if (!cmd || cmd === 'help') {
+  const [rawCmd] = args.positionals.splice(0, 1);
+  let cmd = rawCmd;
+  if (!cmd) {
+    // 裸命令：交互终端直接进入 TUI（pi agent 风格）；非交互环境保持 help。
+    if (process.stdin.isTTY && process.stdout.isTTY) cmd = 'tui';
+    else { out(HELP, false); return; }
+  }
+  if (cmd === 'help') {
     out(HELP, false);
     return;
   }
   try {
     const ctx = loadCtx(args.flags['--root'] as string | undefined);
+    if (cmd === 'tui') {
+      const db = openDb(ctx.dbPath);
+      runTui(ctx, db, packageVersion());
+      return;
+    }
     process.exitCode = dispatch(cmd, args, ctx);
   } catch (error) {
     console.error(`Error: ${(error as Error).message}`);

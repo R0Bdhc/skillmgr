@@ -110,6 +110,19 @@ theme-factory                upstream ✓(jun) ·       ·       ·       =
 Legend: ✓ 已部署  ! 漂移  x 缺失  ? 非受管  · 未部署  |  = 最新  ↑ 有更新  E 检查出错
 ```
 
+## 交互式控制台（TUI）
+
+在终端里裸敲 `skillmgr`（或 `skillmgr tui`）进入键盘驱动的交互控制台——**部署矩阵就是界面**。没有菜单层级：移动光标、敲一个键，操作完成。
+
+```
+↑↓←→   移动光标                 enter/space  切换单元格：· → ✓ 部署，✓ → × 取消部署
+u      更新该 skill（upstream）  a            从 GitHub/GitLab 添加
+D      doctor --fix             R            重扫 store
+/      按名称过滤                ?            帮助浮层          q  退出
+```
+
+长操作（update/add/doctor）会挂起全屏、流式输出正常日志、按任意键返回。非 TTY 环境自动回退到子命令接口。
+
 ## 平台支持
 
 | | Windows | Linux | macOS |

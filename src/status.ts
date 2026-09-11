@@ -45,6 +45,11 @@ const GLYPH: Record<CellState, string> = {
   'not-deployed': '·',
 };
 
+/** CLI 表格与 TUI 共用的单元格符号。 */
+export function cellSymbol(state: CellState): string {
+  return GLYPH[state];
+}
+
 const UPDATE_GLYPH: Record<MatrixRow['updateStatus'], string> = {
   up_to_date: '=',
   update_available: '↑',

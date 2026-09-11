@@ -110,6 +110,19 @@ theme-factory                upstream ✓(jun) ·       ·       ·       =
 Legend: ✓ deployed  ! drift  x missing  ? unmanaged  · not deployed  |  = up-to-date  ↑ update available  E check error
 ```
 
+## Interactive console (TUI)
+
+Run bare `skillmgr` (or `skillmgr tui`) in a terminal for a keyboard-driven console — the deployment matrix *is* the interface. No menus: move the cursor, hit a key, done.
+
+```
+↑↓←→   move the cursor          enter/space  toggle cell: · → ✓ deploy, ✓ → × undeploy
+u      update skill (upstream)  a            add from GitHub/GitLab
+D      doctor --fix             R            rescan store
+/      filter by skill name     ?            help overlay          q  quit
+```
+
+Long operations (update/add/doctor) suspend the full screen, stream normal output, and resume on any keypress. Requires Node's keypress support; non-TTY environments fall back to the subcommand interface.
+
 ## Platform support
 
 | | Windows | Linux | macOS |

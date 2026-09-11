@@ -1,6 +1,6 @@
 {
   "name": "skillmgr",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Cross-agent unified AI skills manager: one canonical skill store, deployed to every coding agent (Windows / Linux / macOS)",
   "type": "module",
   "private": true,
