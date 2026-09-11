@@ -4,7 +4,7 @@ import { emitKeypressEvents } from 'node:readline';
 import type { DatabaseSync } from 'node:sqlite';
 import { expandHome, saveExtraAgent, type AgentSpec, type Ctx } from '../config.ts';
 import { listDetectedAgents, shortAgentId } from '../agents.ts';
-import { buildMatrix, cellSymbol, type MatrixRow } from '../status.ts';
+import { buildMatrix, cellSymbol, updateMarker, type MatrixRow } from '../status.ts';
 import { deployOne, undeployOne } from '../deploy.ts';
 import { syncStoreToRegistry } from '../store.ts';
 import { addFromRepo, updateSkill } from '../sources.ts';
@@ -27,7 +27,7 @@ export interface TuiState {
   menuCursor: number;
   agentCursor: number;
   manageCursor: number;
-  monitorCursor: { r: number; c: number };
+  monitorCursor: { r: number };
   /** Skills Management 当前选中的 agent（manage 视图的 m×1 列表主体）。 */
   currentAgent: AgentSpec | null;
   filter: { active: boolean; text: string };
@@ -83,14 +83,11 @@ export function suggestAgentId(skillsDir: string): string {
   return id || 'agent';
 }
 
-/** 监视视图当前光标指向的 {skill, agent}。 */
-export function cellAt(state: TuiState): { row: MatrixRow; agent: AgentSpec } | null {
+/** 监视视图当前高亮的 skill 行。 */
+export function monitorRowAt(state: TuiState): MatrixRow | null {
   const rows = filteredRows(state);
-  const agents = monitorAgents(state);
-  if (rows.length === 0 || agents.length === 0) return null;
-  const r = Math.min(state.monitorCursor.r, rows.length - 1);
-  const c = Math.min(state.monitorCursor.c, agents.length - 1);
-  return { row: rows[r], agent: agents[c] };
+  if (rows.length === 0) return null;
+  return rows[Math.min(state.monitorCursor.r, rows.length - 1)];
 }
 
 /** 显示宽度：CJK/全角按 2 列计。 */
@@ -114,7 +111,7 @@ const STATE_COLOR = {
 
 const UPDATE_MARK: Record<MatrixRow['updateStatus'], string> = {
   up_to_date: '=',
-  update_available: '↑',
+  update_available: '*',
   error: 'E',
   unchecked: ' ',
 };
@@ -143,7 +140,7 @@ function footer(state: TuiState): string {
     menu: ' ↑↓ move · enter select · q quit',
     agents: ' ↑↓ move · enter manage skills · a add · D doctor · R rescan · ← back · ? help · q quit',
     manage: ' ↑↓ move · enter/space yes↔no · u update · / filter · ← agents · ? help · q quit',
-    monitor: ' ↑↓←→ inspect · r refresh · / filter · ← menu · ? help · q quit',
+    monitor: ' ↑↓ inspect · r refresh · / filter · ← menu · ? help · q quit',
   };
   return ansi.paint('gray', hints[state.mode] ?? '');
 }
@@ -221,7 +218,7 @@ function buildMonitorFrame(state: TuiState): string {
   const rows = filteredRows(state);
   const agents = monitorAgents(state);
   const colW = Math.max(8, ...agents.map((a) => shortAgentId(a.id).length + 2));
-  const nameW = Math.max(12, ...rows.map((r) => displayWidth(r.skill.name))) + 2;
+  const nameW = Math.max(12, ...rows.map((r) => displayWidth(r.skill.name + updateMarker(r)))) + 2;
   const lines = [title(state, 'status monitor (read-only)')];
 
   if (agents.length === 0) {
@@ -236,16 +233,22 @@ function buildMonitorFrame(state: TuiState): string {
 
     rows.forEach((row, ri) => {
       const rowSelected = ri === Math.min(state.monitorCursor.r, rows.length - 1);
-      let line = rowSelected ? ansi.style(pad(row.skill.name, nameW), ansi.BOLD) : pad(row.skill.name, nameW);
-      agents.forEach((agent, ci) => {
+      const marked = updateMarker(row) !== '';
+      // (#) 紧跟名字（重点标注），并计入名字列宽度，不破坏后续列对齐
+      let line: string;
+      if (marked) {
+        const raw = row.skill.name + '(#)';
+        line = row.skill.name + ansi.style('(#)', ansi.BOLD + ansi.FG.yellow) + ' '.repeat(Math.max(0, nameW - displayWidth(raw)));
+      } else {
+        line = rowSelected ? ansi.style(pad(row.skill.name, nameW), ansi.BOLD) : pad(row.skill.name, nameW);
+      }
+      for (const agent of agents) {
         const cell = row.cells[agent.id];
         const mark = `${cellSymbol(cell.state)}${cell.mode ? cell.mode[0] : ''}`;
-        const text = pad(mark, colW);
-        const isSelected = rowSelected && ci === state.monitorCursor.c;
-        line += isSelected ? ansi.style(text, ansi.INVERSE) : ansi.paint(STATE_COLOR[cell.state], text);
-      });
+        line += ansi.style(pad(mark, colW), STATE_COLOR[cell.state]);
+      }
       const updateMark = UPDATE_MARK[row.updateStatus];
-      line += updateMark === '↑' ? ansi.paint('yellow', '↑') : updateMark === 'E' ? ansi.paint('red', 'E') : ansi.paint('gray', updateMark);
+      line += updateMark === '*' ? ansi.paint('yellow', '*') : updateMark === 'E' ? ansi.paint('red', 'E') : ansi.paint('gray', updateMark);
       lines.push(line);
     });
   }
@@ -275,7 +278,8 @@ function buildHelpFrame(): string {
     '    ←             back to the agent list',
     '',
     '  agent list:      enter manage · a add from GitHub · D doctor · R rescan',
-    '  status monitor:  connected agents only · read-only · ↑↓←→ inspect · r refresh',
+    '  status monitor:  connected agents only · read-only · ↑↓ rows · ← menu',
+    '                   (#) after a skill name = update available',
     '  anywhere:        ? help · q quit',
     '',
     ansi.paint('gray', '  press any key to return'),
@@ -317,7 +321,7 @@ export function runTui(ctx: Ctx, db: DatabaseSync, version = '0'): void {
     menuCursor: 0,
     agentCursor: 0,
     manageCursor: 0,
-    monitorCursor: { r: 0, c: 0 },
+    monitorCursor: { r: 0 },
     currentAgent: null,
     filter: { active: false, text: '' },
     status: { text: '', ok: true },
@@ -485,7 +489,7 @@ export function runTui(ctx: Ctx, db: DatabaseSync, version = '0'): void {
       else if (plainKey === 'down') state.menuCursor = Math.min(MENU_ITEMS.length - 1, state.menuCursor + 1);
       else if (plainKey === 'return' || plainKey === 'space') {
         if (state.menuCursor === 0) state.mode = 'agents';
-        else if (state.menuCursor === 1) { state.mode = 'monitor'; state.monitorCursor = { r: 0, c: 0 }; }
+        else if (state.menuCursor === 1) { state.mode = 'monitor'; state.monitorCursor = { r: 0 }; }
         else state.input = { step: 'agent-path', repo: '', agentPath: '', prompt: 'agent skills dir (absolute path):', buffer: '' };
       } else if (plainKey === 'q') { quit(); return; }
       redraw();
@@ -566,13 +570,10 @@ export function runTui(ctx: Ctx, db: DatabaseSync, version = '0'): void {
       return;
     }
 
-    // monitor（只读，仅已连接 agent）
+    // monitor（只读，仅已连接 agent，行级导航）
     const rowCount = filteredRows(state).length;
-    const connectedCount = monitorAgents(state).length;
     if (plainKey === 'up') state.monitorCursor.r = Math.max(0, state.monitorCursor.r - 1);
     else if (plainKey === 'down') state.monitorCursor.r = Math.min(Math.max(0, rowCount - 1), state.monitorCursor.r + 1);
-    else if (plainKey === 'left') state.monitorCursor.c = Math.max(0, state.monitorCursor.c - 1);
-    else if (plainKey === 'right') state.monitorCursor.c = Math.min(Math.max(0, connectedCount - 1), state.monitorCursor.c + 1);
     else if (plainKey === 'r') {
       reload(ctx, db, state);
       setStatus(state, 'refreshed');

@@ -102,13 +102,16 @@ skillmgr history | root | help
 ### 部署矩阵
 
 ```
-skill                        type  claude   codex    cursor   zcode    update
-------------------------------------------------------------------------------
-code-debugger                local  ✓(jun)  ✓(jun)  ·       ·       =
-theme-factory                upstream ✓(jun) ·       ·       ·       =
+skill              type  claude   codex    cursor   zcode    update
+--------------------------------------------------------------------
+code-debugger      local  Y(jun)  Y(jun)  .       .       =
+theme-factory(#)   upstream Y(jun) .       .       .       *
 
-Legend: ✓ 已部署  ! 漂移  x 缺失  ? 非受管  · 未部署  |  = 最新  ↑ 有更新  E 检查出错
+Legend: Y 已部署  ! 漂移  x 缺失  ? 非受管  . 未部署
+        = 最新  * 有更新  E 检查出错  名字后的 (#) = 有可用更新
 ```
+
+标记刻意使用 ASCII 字符：✓ 这类符号在中文环境终端按宽字符渲染而按 1 列计算，会造成列错位；ASCII 保证任何终端/语言环境下都对齐。
 
 ## 交互式控制台（TUI）
 

@@ -102,13 +102,16 @@ Every command accepts `--json` for machine-readable output and `--root <path>` t
 ### The deployment matrix
 
 ```
-skill                        type  claude   codex    cursor   zcode    update
-------------------------------------------------------------------------------
-code-debugger                local  ✓(jun)  ✓(jun)  ·       ·       =
-theme-factory                upstream ✓(jun) ·       ·       ·       =
+skill              type  claude   codex    cursor   zcode    update
+--------------------------------------------------------------------
+code-debugger      local  Y(jun)  Y(jun)  .       .       =
+theme-factory(#)   upstream Y(jun) .       .       .       *
 
-Legend: ✓ deployed  ! drift  x missing  ? unmanaged  · not deployed  |  = up-to-date  ↑ update available  E check error
+Legend: Y deployed  ! drift  x missing  ? unmanaged  . not deployed
+        = up-to-date  * update available  E check error  (#) after a name = update available
 ```
+
+Marks are deliberately ASCII so columns stay aligned in every terminal/locale (CJK terminals render glyphs like ✓ as wide characters, which silently breaks column alignment).
 
 ## Interactive console (TUI)
 

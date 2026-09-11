@@ -2,31 +2,33 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { saveExtraAgent } from '../src/config.ts';
-import { buildFrame, cellAt, ensureTTY, filteredRows, manageEntries, monitorAgents, suggestAgentId, MENU_ITEMS, type TuiState } from '../src/tui/app.ts';
-import type { MatrixRow, CellState } from '../src/status.ts';
+import { renderMatrix, type MatrixRow } from '../src/status.ts';
+import { buildFrame, ensureTTY, filteredRows, manageEntries, monitorAgents, monitorRowAt, suggestAgentId, MENU_ITEMS, type TuiState } from '../src/tui/app.ts';
+import type { CellState } from '../src/status.ts';
 import type { AgentSpec, Ctx } from '../src/config.ts';
 
 /** 真实临时目录：connected 目录存在（检测通过），ghost 不存在（未连接）。 */
-function makeDetectionFixture(): { base: string; connected: AgentSpec; ghost: AgentSpec; clean: () => void } {
+function makeDetectionFixture(): { connected: AgentSpec; ghost: AgentSpec; clean: () => void } {
   const base = mkdtempSync(join(tmpdir(), 'skillmgr-tui-'));
   const connectedDir = join(base, 'connected');
   mkdirSync(connectedDir, { recursive: true });
   return {
-    base,
     connected: { id: 'connected', label: 'Connected', skillsDir: connectedDir, detectPaths: [connectedDir] },
     ghost: { id: 'ghost', label: 'Ghost', skillsDir: join(base, 'ghost'), detectPaths: [join(base, 'ghost')] },
     clean: () => rmSync(base, { recursive: true, force: true }),
   };
 }
 
-function mkRow(name: string, cells: Record<string, CellState>): MatrixRow {
+const FIX = makeDetectionFixture();
+const AGENTS: AgentSpec[] = [FIX.connected, FIX.ghost];
+
+function mkRow(name: string, cells: Record<string, CellState> = {}, updateStatus: MatrixRow['updateStatus'] = 'unchecked'): MatrixRow {
   const full: Record<string, { state: CellState; mode?: string; detail: string }> = {};
   for (const agent of AGENTS) {
     const state = cells[agent.id] ?? 'not-deployed';
-    full[agent.id] = { state, mode: state === 'ok' ? 'junction' : undefined, detail: '' };
+    full[agent.id] = { state, mode: state === 'ok' || state === 'drift' ? 'junction' : undefined, detail: '' };
   }
   return {
     skill: {
@@ -38,27 +40,23 @@ function mkRow(name: string, cells: Record<string, CellState>): MatrixRow {
       content_hash: 'deadbeef',
       updated_at: '2026-01-01',
     },
-    updateStatus: 'unchecked',
+    updateStatus,
     cells: full,
   };
 }
-
-const AGENTS: AgentSpec[] = [];
-const FIX = makeDetectionFixture();
-AGENTS.push(FIX.connected, FIX.ghost);
 
 function fakeState(overrides: Partial<TuiState> = {}): TuiState {
   return {
     ctx: { root: '/fake/store', agents: AGENTS } as unknown as Ctx,
     root: '/fake/store',
     version: 'test',
-    rows: [mkRow('alpha', { 'fake-agent': 'ok' }), mkRow('Beta-skill', {})],
+    rows: [mkRow('alpha', { connected: 'ok' }), mkRow('Beta-skill', {})],
     mode: 'menu',
     helpReturn: 'menu',
     menuCursor: 0,
     agentCursor: 0,
     manageCursor: 0,
-    monitorCursor: { r: 0, c: 0 },
+    monitorCursor: { r: 0 },
     currentAgent: null,
     filter: { active: false, text: '' },
     status: { text: '', ok: true },
@@ -76,18 +74,40 @@ test('menu items: management, monitor, add agent', () => {
 });
 
 test('monitorAgents only returns connected (detected) agents', () => {
-  const state = fakeState({ mode: 'monitor' });
-  const ids = monitorAgents(state).map((a) => a.id);
+  const ids = monitorAgents(fakeState({ mode: 'monitor' })).map((a) => a.id);
   assert.deepEqual(ids, ['connected']);
-  assert.ok(!ids.includes('ghost'));
 });
 
-test('monitor frame hides unconnected agents and hints when none connected', () => {
-  const frame = buildFrame(fakeState({ mode: 'monitor' }));
-  assert.match(frame, /status monitor \(read-only\)/);
-  assert.match(frame, /connected/);
-  assert.doesNotMatch(frame, /ghost/);
+/** 剥离 ANSI 转义后断言纯文本内容（含 (#)、列对齐等）。 */
+function plain(frame: string): string {
+  return frame.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
+}
 
+test('monitor frame: connected-only, ASCII marks, (#) update marker, row navigation hints', () => {
+  const text = plain(buildFrame(fakeState({
+    mode: 'monitor',
+    rows: [
+      mkRow('fresh-skill', { connected: 'ok' }),
+      mkRow('stale-skill', { connected: 'ok' }, 'update_available'),
+    ],
+  })));
+  assert.match(text, /status monitor \(read-only\)/);
+  assert.match(text, /fresh-skill/);
+  assert.match(text, /stale-skill\(#\)/, '(#) 应紧跟名字');
+  assert.match(text, /\*$/m); // 更新列的 update available 标记
+  assert.match(text, /← menu/);
+  // 对齐表格区（表头至数据行）禁用 Ambiguous Width 字符（bug 2 防回归）；
+  // 页脚提示里的 · 分隔符与 ↑↓ 箭头是装饰，不参与对齐，不在守卫范围
+  const lines = text.split('\n');
+  const start = lines.findIndex((l) => l.startsWith('skill'));
+  const end = lines.findIndex((l) => l.trim() === '', start);
+  const table = lines.slice(start, end === -1 ? undefined : end).join('\n');
+  assert.doesNotMatch(table, /[✓·×↑]/);
+  assert.doesNotMatch(table, /ghost/, '未连接 agent 不应出现在监视矩阵');
+  assert.doesNotMatch(table, /undefined/, '配色查找不得产生 undefined');
+});
+
+test('monitor frame hints when no agents are connected', () => {
   const empty = buildFrame(fakeState({
     mode: 'monitor',
     ctx: { root: '/fake/store', agents: [FIX.ghost] } as unknown as Ctx,
@@ -102,12 +122,11 @@ test('suggestAgentId derives id from the parent directory name', () => {
 });
 
 test('manage frame renders the m×1 yes/no list for the chosen agent', () => {
-  const state = fakeState({
+  const frame = buildFrame(fakeState({
     mode: 'manage',
     currentAgent: AGENTS[0],
     rows: [mkRow('alpha', { connected: 'ok' }), mkRow('Beta-skill', {})],
-  });
-  const frame = buildFrame(state);
+  }));
   assert.match(frame, /skills management — Connected/);
   assert.match(frame, /\byes\b/);
   assert.match(frame, /\bno\b/);
@@ -143,13 +162,25 @@ test('filteredRows matches skill names case-insensitively', () => {
   assert.equal(filteredRows(fakeState()).length, 2);
 });
 
-test('cellAt clamps the monitor cursor to connected agents only', () => {
-  const at = cellAt(fakeState({ mode: 'monitor', monitorCursor: { r: 0, c: 99 } }));
-  assert.equal(at?.agent.id, 'connected');
-  assert.equal(at?.row.skill.name, 'alpha');
-  const clamped = cellAt(fakeState({ mode: 'monitor', monitorCursor: { r: 99, c: 99 } }));
-  assert.equal(clamped?.row.skill.name, 'Beta-skill');
-  assert.equal(clamped?.agent.id, 'connected');
+test('monitorRowAt clamps to the visible rows', () => {
+  const state = fakeState({ mode: 'monitor', monitorCursor: { r: 99 } });
+  assert.equal(monitorRowAt(state)?.skill.name, 'Beta-skill');
+  assert.equal(monitorRowAt(fakeState({ mode: 'monitor', rows: [] })), null);
+});
+
+test('CLI renderMatrix: ASCII marks, (#) marker, updated legend', () => {
+  const ctx = { agents: AGENTS } as unknown as Ctx;
+  const out = renderMatrix(ctx, [
+    mkRow('fresh-skill', { connected: 'ok' }),
+    mkRow('stale-skill', { connected: 'drift' }, 'update_available'),
+  ]);
+  assert.match(out, /fresh-skill/);
+  assert.match(out, /stale-skill\(#\)/);
+  assert.match(out, /Y\(jun\)/);
+  assert.match(out, /!\(jun\)/); // drift 单元格仍带部署模式后缀
+  assert.match(out, /Legend: Y deployed/);
+  assert.match(out, /\*$/m); // update available 列标记
+  assert.doesNotMatch(out, /[✓·×↑]/);
 });
 
 test('saveExtraAgent persists to store config and rejects duplicates', () => {
@@ -179,5 +210,4 @@ test('ensureTTY rejects non-interactive streams', () => {
   assert.throws(() => ensureTTY({ isTTY: false }, { isTTY: true }), /TTY/);
   assert.throws(() => ensureTTY({ isTTY: true }, { isTTY: false }), /TTY/);
   assert.doesNotThrow(() => ensureTTY({ isTTY: true }, { isTTY: true }));
-  void homedir;
 });
