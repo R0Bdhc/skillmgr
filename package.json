@@ -1,0 +1,36 @@
+{
+  "name": "skillmgr",
+  "version": "0.2.0",
+  "description": "Cross-agent unified AI skills manager: one canonical skill store, deployed to every coding agent (Windows / Linux / macOS)",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/R0Bdhc/skillmgr.git"
+  },
+  "bugs": {
+    "url": "https://github.com/R0Bdhc/skillmgr/issues"
+  },
+  "homepage": "https://github.com/R0Bdhc/skillmgr#readme",
+  "keywords": [
+    "ai",
+    "agents",
+    "skills",
+    "claude",
+    "codex",
+    "cursor",
+    "cli"
+  ],
+  "bin": {
+    "skillmgr": "bin/skillmgr.js"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node bin/skillmgr.js",
+    "test": "node --test \"tests/*.test.ts\""
+  },
+  "dependencies": {}
+}

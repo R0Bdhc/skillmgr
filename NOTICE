@@ -1,0 +1,6 @@
+skillmgr
+Copyright 2026 skillmgr contributors
+
+This product includes path conventions for coding-agent skill directories
+adapted from vercel-labs/skills (https://github.com/vercel-labs/skills),
+licensed under the MIT License.
