@@ -67,10 +67,18 @@ export function classifyTarget(target: string, canonicalPath: string, skillName:
     } catch {
       return { kind: 'link', managed: true, healthy: false, detail: 'dangling link (canonical missing)' };
     }
+    // 两侧都做 realpath 归一化：macOS 的 TMPDIR 位于 /var -> /private/var 这类 symlink 路径下，
+    // resolve() 不解析符号链接，直接比较会误判为不健康。
+    let canonicalReal = '';
+    try {
+      canonicalReal = realpathSync(canonicalPath);
+    } catch {
+      return { kind: 'link', managed: true, healthy: false, detail: 'dangling link (canonical missing)' };
+    }
     return {
       kind: 'link',
       managed: true,
-      healthy: pathEq(real, resolve(canonicalPath)),
+      healthy: pathEq(real, canonicalReal),
       detail: `link → ${real}`,
     };
   }
