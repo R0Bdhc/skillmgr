@@ -112,16 +112,28 @@ Legend: ✓ deployed  ! drift  x missing  ? unmanaged  · not deployed  |  = up-
 
 ## Interactive console (TUI)
 
-Run bare `skillmgr` (or `skillmgr tui`) in a terminal for a keyboard-driven console — the deployment matrix *is* the interface. No menus: move the cursor, hit a key, done.
+Run bare `skillmgr` (or `skillmgr tui`) in a terminal. A main menu separates **managing** skills from **watching** them:
 
 ```
-↑↓←→   move the cursor          enter/space  toggle cell: · → ✓ deploy, ✓ → × undeploy
-u      update skill (upstream)  a            add from GitHub/GitLab
-D      doctor --fix             R            rescan store
-/      filter by skill name     ?            help overlay          q  quit
+ main menu ──► Skills Management ──► pick an agent ──► that agent's skills, one per row:
+                                              yes   code-debugger
+                                              no    theme-factory
+                                              ...
+       └──────────► Skills Status Monitor ──► the full skill × agent matrix (read-only)
 ```
 
-Long operations (update/add/doctor) suspend the full screen, stream normal output, and resume on any keypress. Requires Node's keypress support; non-TTY environments fall back to the subcommand interface.
+- **Skills Management** — one screen per agent, an m×1 list where every skill is just **yes** (activated/deployed) or **no** (not activated). `enter`/`space` toggles it for that agent; re-activating a drifted row repairs it. Unmanaged content is never touched.
+- **Skills Status Monitor** — the read-only deployment matrix: inspect, filter, refresh.
+
+```
+ menu      ↑↓ move · enter select
+ agents    ↑↓ move · enter manage · a add from GitHub · D doctor · R rescan · ← back
+ manage    ↑↓ move · enter/space yes↔no · u update · / filter · ← back
+ monitor   ↑↓←→ inspect · r refresh · / filter · ← back
+ anywhere  ? help · q quit
+```
+
+Long operations (add/update/doctor/rescan) suspend the full screen, stream normal output, and resume on any keypress. Non-TTY environments fall back to the subcommand interface.
 
 ## Platform support
 

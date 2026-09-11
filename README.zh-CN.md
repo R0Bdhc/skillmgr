@@ -112,16 +112,28 @@ Legend: ✓ 已部署  ! 漂移  x 缺失  ? 非受管  · 未部署  |  = 最�
 
 ## 交互式控制台（TUI）
 
-在终端里裸敲 `skillmgr`（或 `skillmgr tui`）进入键盘驱动的交互控制台——**部署矩阵就是界面**。没有菜单层级：移动光标、敲一个键，操作完成。
+在终端里裸敲 `skillmgr`（或 `skillmgr tui`）。主菜单把**管理**与**监视**分成两条路径：
 
 ```
-↑↓←→   移动光标                 enter/space  切换单元格：· → ✓ 部署，✓ → × 取消部署
-u      更新该 skill（upstream）  a            从 GitHub/GitLab 添加
-D      doctor --fix             R            重扫 store
-/      按名称过滤                ?            帮助浮层          q  退出
+ 主菜单 ──► Skills Management ──► 选一个 agent ──► 该 agent 的 skill 列表（m×1）：
+                                              yes   code-debugger
+                                              no    theme-factory
+                                              ...
+       └──────────► Skills Status Monitor ──► 完整 skill × agent 矩阵（只读）
 ```
 
-长操作（update/add/doctor）会挂起全屏、流式输出正常日志、按任意键返回。非 TTY 环境自动回退到子命令接口。
+- **Skills Management**——每个 agent 一屏，m×1 列表里每个 skill 只有 **yes**（已激活/已部署）或 **no**（未激活）两个值。`enter`/`space` 对该 agent 切换；重新激活 drift 行即修复；非受管内容绝不触碰。
+- **Skills Status Monitor**——只读部署矩阵：巡检、过滤、刷新。
+
+```
+ menu      ↑↓ 移动 · enter 选择
+ agents    ↑↓ 移动 · enter 进入管理 · a 从 GitHub 添加 · D doctor · R 重扫 · ← 返回
+ manage    ↑↓ 移动 · enter/space yes↔no · u 更新 · / 过滤 · ← 返回
+ monitor   ↑↓←→ 巡检 · r 刷新 · / 过滤 · ← 返回
+ anywhere  ? 帮助 · q 退出
+```
+
+长操作（add/update/doctor/rescan）会挂起全屏、流式输出正常日志、按任意键返回。非 TTY 环境自动回退到子命令接口。
 
 ## 平台支持
 
